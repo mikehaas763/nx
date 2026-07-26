@@ -17,6 +17,14 @@ List<string> projectFiles;
 List<string> directoryFiles = new();
 PluginOptions? pluginOptions = null;
 
+// The plugin sends enum-valued options as strings ("class"/"method"), which
+// System.Text.Json will not bind to an enum without this converter.
+var pluginOptionsJsonOptions = new JsonSerializerOptions
+{
+    PropertyNameCaseInsensitive = true,
+    Converters = { new JsonStringEnumConverter() }
+};
+
 var directoryFileNameSet = new HashSet<string>(
     ProjectUtilities.DirectoryBuildFileNames,
     StringComparer.OrdinalIgnoreCase
@@ -42,10 +50,7 @@ if (Console.IsInputRedirected)
     {
         try
         {
-            pluginOptions = JsonSerializer.Deserialize<PluginOptions>(args[1], new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            });
+            pluginOptions = JsonSerializer.Deserialize<PluginOptions>(args[1], pluginOptionsJsonOptions);
         }
         catch (Exception ex)
         {

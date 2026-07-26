@@ -41,6 +41,14 @@ export interface DotNetAnalyzerOptions {
   restoreTargetName?: string;
   publishTargetName?: string;
   packTargetName?: string;
+  /**
+   * Name of the atomized parent target. Undefined disables test splitting
+   * entirely, which is the default.
+   */
+  testCiTargetName?: string;
+  /** Pre-derived group name; the analyzer does not compute one. */
+  testCiGroupName?: string;
+  testCiSplitBy?: 'class' | 'method';
 }
 
 /**
