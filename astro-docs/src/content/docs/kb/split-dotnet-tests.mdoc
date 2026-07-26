@@ -89,12 +89,13 @@ running a test measured in milliseconds.
 
 ## What still runs in one task
 
-Nested, generic, and abstract test classes are not split out, because the test platform has no
-stable way to select them individually from the command line. Generic test methods are excluded for
-the same reason under `ciSplitBy: method`.
+Nested and generic test classes are not split out, because their names have no stable command-line
+form to filter on. Generic test methods are excluded for the same reason under `ciSplitBy: method`.
+Those tests still run as part of the ordinary `test` target, and the plugin reports how many it left
+out while building the project graph, so the gap is visible up front.
 
-Those tests still run as part of the ordinary `test` target. The plugin reports how many it left out
-while building the project graph, so the gap is visible up front.
+An abstract test class isn't split either, but that costs you nothing — the concrete classes that
+derive from it are what carry tests, and each of those gets its own task.
 
 Tests declared on a base class and inherited by a subclass that carries no `[TestClass]` of its own
 are also missed. If you rely on that pattern, keep the project on its `test` target.
