@@ -171,7 +171,7 @@ public static class Analyzer
                         pluginOptions,
                         nxJson,
                         directoryBuildInputs,
-                        IsMtpProject(properties, packageRefs),
+                        SupportsTestSplitting(properties, packageRefs),
                         // Passed as a callback so the sources are only read and
                         // parsed for projects that actually opt into splitting.
                         splitBy => TestClassScanner.Scan(primaryNode.ProjectInstance!, splitBy)
@@ -338,23 +338,42 @@ public static class Analyzer
     }
 
     /// <summary>
-    /// Whether a test project runs on Microsoft.Testing.Platform, which is what
-    /// provides the command-line filtering that test splitting depends on.
+    /// Whether a test project can have its tests split into separate tasks.
     /// </summary>
-    internal static bool IsMtpProject(
+    /// <remarks>
+    /// Requires both Microsoft.Testing.Platform and MSTest.
+    ///
+    /// The platform alone is not enough. Its own <c>--treenode-filter</c> is
+    /// only registered by frameworks that opt into it, and MSTest is not one of
+    /// them, so the filters here use <c>--filter</c> — whose expression syntax
+    /// comes from MSTest rather than the platform. A project on the platform
+    /// with a different framework would be handed an option its runner does not
+    /// recognize, so it is excluded rather than given targets that fail at run
+    /// time.
+    /// </remarks>
+    internal static bool SupportsTestSplitting(
         Dictionary<string, string> properties,
         List<PackageReference> packageRefs)
     {
-        var enabledByProperty = new[]
+        var platformEnabled = new[]
         {
             "EnableMSTestRunner",
             "TestingPlatformDotnetTestSupport",
             "UseMicrosoftTestingPlatformRunner"
         }.Any(name => properties.GetValueOrDefault(name)?
-            .Equals("true", StringComparison.OrdinalIgnoreCase) == true);
+            .Equals("true", StringComparison.OrdinalIgnoreCase) == true)
+            || packageRefs.Any(p => p.Include.StartsWith("Microsoft.Testing.Platform", StringComparison.OrdinalIgnoreCase));
 
-        return enabledByProperty ||
-               packageRefs.Any(p => p.Include.StartsWith("Microsoft.Testing.Platform", StringComparison.OrdinalIgnoreCase));
+        // EnableMSTestRunner is MSTest-specific, and is what MSTest.Sdk sets, so
+        // it doubles as the SDK check that MSBuild gives us no direct way to make.
+        var isMSTest =
+            properties.GetValueOrDefault("EnableMSTestRunner")?
+                .Equals("true", StringComparison.OrdinalIgnoreCase) == true ||
+            packageRefs.Any(p =>
+                p.Include.Equals("MSTest", StringComparison.OrdinalIgnoreCase) ||
+                p.Include.StartsWith("MSTest.", StringComparison.OrdinalIgnoreCase));
+
+        return platformEnabled && isMSTest;
     }
 
     private static bool IsExecutableProject(Dictionary<string, string> properties)

@@ -22,7 +22,7 @@ public static partial class TargetBuilder
         PluginOptions options,
         NxJsonConfig? nxJson,
         List<string> directoryBuildInputs,
-        bool isMtp = false,
+        bool supportsSplitting = false,
         Func<SplitBy, TestDiscoveryResult>? discoverTestUnits = null)
     {
         var targets = new Dictionary<string, Target>();
@@ -40,13 +40,14 @@ public static partial class TargetBuilder
 
             if (options.TestCiTargetName is not null && discoverTestUnits is not null)
             {
-                if (!isMtp)
+                if (!supportsSplitting)
                 {
-                    // Splitting relies on the platform's filtering options, so
-                    // there is no way to honor the request here. Say so rather
-                    // than quietly producing an unsplit project.
+                    // The filters depend on options MSTest contributes to
+                    // Microsoft.Testing.Platform, so there is no way to honor the
+                    // request here. Say so rather than quietly producing an
+                    // unsplit project, or targets that fail at run time.
                     Console.Error.WriteLine(
-                        $"@nx/dotnet: cannot split tests for '{projectName}' because it does not use " +
+                        $"@nx/dotnet: cannot split tests for '{projectName}'. Splitting needs MSTest on " +
                         "Microsoft.Testing.Platform. Set <EnableMSTestRunner>true</EnableMSTestRunner> " +
                         "and <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>, " +
                         "or use the MSTest.Sdk project SDK.");

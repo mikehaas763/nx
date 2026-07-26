@@ -35,7 +35,7 @@ public class TargetBuilderAtomizerTests
     private static BuildTargetsResult Build(
         PluginOptions? options = null,
         List<TestUnit>? units = null,
-        bool isMtp = true,
+        bool supportsSplitting = true,
         bool isTest = true,
         Dictionary<string, string>? properties = null,
         string? projectDirectory = null) =>
@@ -51,7 +51,7 @@ public class TargetBuilderAtomizerTests
             options: options ?? Options(),
             nxJson: null,
             directoryBuildInputs: [],
-            isMtp: isMtp,
+            supportsSplitting: supportsSplitting,
             discoverTestUnits: _ => new TestDiscoveryResult { Units = units ?? TwoClasses });
 
     private static string[] Args(Target target) => target.Options?.Args ?? [];
@@ -71,11 +71,11 @@ public class TargetBuilderAtomizerTests
     }
 
     [Fact]
-    public void WithoutMtp_NoSplitTargetsAreEmitted()
+    public void WithoutMSTestOnThePlatform_NoSplitTargetsAreEmitted()
     {
-        // Splitting needs the platform's filtering options, so a VSTest-only
-        // project cannot be split even when asked.
-        var result = Build(isMtp: false);
+        // The filters come from MSTest's contribution to the platform, so a
+        // project without both cannot be split even when asked.
+        var result = Build(supportsSplitting: false);
 
         Assert.DoesNotContain(result.Targets.Keys, name => name.StartsWith("test-ci"));
         Assert.False(result.DerivedFromSources);
