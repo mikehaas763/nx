@@ -76,6 +76,7 @@ public static class Analyzer
 
         var nodesByFile = new Dictionary<string, NxProjectGraphNode>();
         var referencesByRoot = new Dictionary<string, ReferencesInfo>();
+        var atomizedRoots = new List<string>();
 
         // Group nodes by project file path to handle multi-targeting projects.
         // Multi-targeting projects (using TargetFrameworks plural) create multiple nodes:
@@ -158,7 +159,7 @@ public static class Analyzer
                         directoryFilesByDir
                     );
 
-                    var targets = TargetBuilder.BuildTargets(
+                    var buildResult = TargetBuilder.BuildTargets(
                         projectName,
                         Path.GetFileName(projectPath),
                         isTest,
@@ -169,17 +170,27 @@ public static class Analyzer
                         workspaceRoot,
                         pluginOptions,
                         nxJson,
-                        directoryBuildInputs
+                        directoryBuildInputs,
+                        IsMtpProject(properties, packageRefs),
+                        // Passed as a callback so the sources are only read and
+                        // parsed for projects that actually opt into splitting.
+                        splitBy => TestClassScanner.Scan(primaryNode.ProjectInstance!, splitBy)
                     );
+
+                    if (buildResult.DerivedFromSources)
+                    {
+                        atomizedRoots.Add(projectRoot);
+                    }
 
                     nodesByFile[relativeProjectFile] = new NxProjectGraphNode
                     {
                         Name = projectName,
                         Root = projectRoot,
-                        Targets = targets,
+                        Targets = buildResult.Targets,
                         Metadata = new Models.ProjectMetadata
                         {
-                            Technologies = ProjectUtilities.GetTechnologies(projectPath)
+                            Technologies = ProjectUtilities.GetTechnologies(projectPath),
+                            TargetGroups = buildResult.TargetGroups
                         }
                     };
 
@@ -202,7 +213,10 @@ public static class Analyzer
         return new AnalysisResult
         {
             NodesByFile = nodesByFile,
-            ReferencesByRoot = referencesByRoot
+            ReferencesByRoot = referencesByRoot,
+            // Left null rather than empty when nothing split, so the plugin can
+            // skip hashing C# sources entirely.
+            AtomizedRoots = atomizedRoots.Count > 0 ? atomizedRoots : null
         };
     }
 
@@ -292,7 +306,15 @@ public static class Analyzer
             "PackageOutputPath",
 
             // Test paths
-            "TestResultsDirectory"
+            "TestResultsDirectory",
+
+            // Microsoft.Testing.Platform. Splitting a test target relies on the
+            // platform's filtering options, so these gate whether a project can
+            // be atomized at all. MSTest.Sdk is not detectable as an SDK
+            // attribute, but it sets EnableMSTestRunner, so it is covered here.
+            "EnableMSTestRunner",
+            "TestingPlatformDotnetTestSupport",
+            "UseMicrosoftTestingPlatformRunner"
         };
 
         foreach (var prop in propertiesToCollect)
@@ -313,6 +335,26 @@ public static class Analyzer
     {
         return properties.GetValueOrDefault("IsTestProject") == "true" ||
                packageRefs.Any(p => p.Include == "Microsoft.NET.Test.Sdk" || p.Include.StartsWith("Microsoft.Testing"));
+    }
+
+    /// <summary>
+    /// Whether a test project runs on Microsoft.Testing.Platform, which is what
+    /// provides the command-line filtering that test splitting depends on.
+    /// </summary>
+    internal static bool IsMtpProject(
+        Dictionary<string, string> properties,
+        List<PackageReference> packageRefs)
+    {
+        var enabledByProperty = new[]
+        {
+            "EnableMSTestRunner",
+            "TestingPlatformDotnetTestSupport",
+            "UseMicrosoftTestingPlatformRunner"
+        }.Any(name => properties.GetValueOrDefault(name)?
+            .Equals("true", StringComparison.OrdinalIgnoreCase) == true);
+
+        return enabledByProperty ||
+               packageRefs.Any(p => p.Include.StartsWith("Microsoft.Testing.Platform", StringComparison.OrdinalIgnoreCase));
     }
 
     private static bool IsExecutableProject(Dictionary<string, string> properties)
