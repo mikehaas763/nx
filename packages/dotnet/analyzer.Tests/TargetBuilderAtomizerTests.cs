@@ -191,15 +191,18 @@ public class TargetBuilderAtomizerTests
     // --- Filters ------------------------------------------------------------
 
     [Fact]
-    public void ClassLeavesFilterByTreeNodeWithTheNamespaceSegment()
+    public void ClassLeavesFilterByFullyQualifiedClassName()
     {
         var result = Build();
 
         var args = Args(result.Targets["test-ci--Acme.Integration.LoginTests"]);
-        var index = Array.IndexOf(args, "--treenode-filter");
+        var index = Array.IndexOf(args, "--filter");
 
         Assert.True(index >= 0);
-        Assert.Equal("\"/*/Acme.Integration/LoginTests/*\"", args[index + 1]);
+        // The namespace is required: MSTest matches nothing for a bare class
+        // name. The platform-level --treenode-filter is not an option here
+        // because MSTest does not register it.
+        Assert.Equal("\"ClassName=Acme.Integration.LoginTests\"", args[index + 1]);
     }
 
     [Fact]
@@ -219,19 +222,37 @@ public class TargetBuilderAtomizerTests
         Assert.True(index >= 0);
         // Exact match, so LoginTestWithMfa does not also run in this leaf.
         Assert.Equal("\"FullyQualifiedName=Acme.Tests.LoginTest\"", args[index + 1]);
-        Assert.DoesNotContain("--treenode-filter", args);
     }
 
     [Fact]
     public void FilterValuesAreQuoted()
     {
-        // Nx runs commands through a shell, which would glob-expand the * in a
-        // treenode filter against the working directory.
+        // Nx runs commands through a shell, so the filter expression is quoted
+        // rather than left to word-splitting.
         var result = Build();
 
         Assert.All(
             result.Targets.Where(pair => pair.Key.StartsWith("test-ci--")),
-            pair => Assert.Contains(Args(pair.Value), arg => arg.StartsWith('"') && arg.Contains('*')));
+            pair =>
+            {
+                var args = Args(pair.Value);
+                var index = Array.IndexOf(args, "--filter");
+                Assert.True(index >= 0);
+                Assert.StartsWith("\"", args[index + 1]);
+                Assert.EndsWith("\"", args[index + 1]);
+            });
+    }
+
+    [Fact]
+    public void NoReporterIsTurnedOn()
+    {
+        // --report-trx comes from an extension that is only present when the
+        // project references it; passing it otherwise is a hard failure.
+        var result = Build();
+
+        Assert.All(
+            result.Targets.Where(pair => pair.Key.StartsWith("test-ci--")),
+            pair => Assert.DoesNotContain(Args(pair.Value), arg => arg.StartsWith("--report-")));
     }
 
     [Fact]
@@ -260,7 +281,7 @@ public class TargetBuilderAtomizerTests
 
         Assert.True(separator >= 0);
         // Everything the platform needs must be after it; SDK flags before.
-        Assert.True(Array.IndexOf(args, "--treenode-filter") > separator);
+        Assert.True(Array.IndexOf(args, "--filter") > separator);
         Assert.True(Array.IndexOf(args, "--no-build") < separator);
     }
 
@@ -322,17 +343,6 @@ public class TargetBuilderAtomizerTests
         var result = Build();
 
         Assert.Equal(result.Targets["test"].Outputs, result.Targets["test-ci"].Outputs);
-    }
-
-    [Fact]
-    public void ReportFilenameIsUniquePerLeafAndTargetFramework()
-    {
-        var result = Build();
-
-        var args = Args(result.Targets["test-ci--Acme.Integration.LoginTests"]);
-        var index = Array.IndexOf(args, "--report-trx-filename");
-
-        Assert.Equal("\"Acme.Integration.LoginTests_{tfm}.trx\"", args[index + 1]);
     }
 
     // --- Parallelism --------------------------------------------------------

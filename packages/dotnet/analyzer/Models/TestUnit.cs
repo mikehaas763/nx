@@ -66,30 +66,32 @@ public sealed record TestUnit
     /// The command-line arguments that restrict a test run to this unit.
     /// </summary>
     /// <remarks>
-    /// The single place a filter expression is constructed, so that the
-    /// contingency for either filter syntax is a one-line change here.
+    /// The single place a filter expression is constructed.
     ///
-    /// Class units use the platform-level <c>--treenode-filter</c>, which works
-    /// for any Microsoft.Testing.Platform framework.
+    /// Both forms use <c>--filter</c>, whose expression syntax MSTest provides.
+    /// The platform-level <c>--treenode-filter</c> would be the framework-neutral
+    /// choice, but MSTest does not register the tree-node filter service — it
+    /// rejects the option outright — so it is not available to us. Verified
+    /// against MSTest 3.6.4 on Microsoft.Testing.Platform.
     ///
-    /// Method units deliberately use <c>--filter</c> instead. The treenode
-    /// equivalent would have to be <c>/*/Ns/Class/Method</c>, which may not match
-    /// the expanded nodes of a <c>[DataRow]</c> method; widening it to
-    /// <c>Method*</c> to compensate would make <c>LoginTest*</c> also match
-    /// <c>LoginTestWithMfa</c>, running that test in two leaves at once.
-    /// <c>FullyQualifiedName=</c> is an exact match, so neither problem exists —
-    /// at the cost of being framework-provided (MSTest) rather than
-    /// platform-level.
+    /// Both operators are exact (<c>=</c>, not a prefix or contains match), which
+    /// is what keeps <c>LoginTest</c> and <c>LoginTestWithMfa</c> in separate
+    /// tasks instead of running the latter in both. Data-driven methods fold
+    /// under their method's own FullyQualifiedName, so one task runs all of a
+    /// <c>[DataRow]</c> method's cases.
     ///
-    /// Values are quoted because Nx runs commands through a shell, which would
-    /// otherwise glob-expand the <c>*</c> in a treenode filter against the
-    /// working directory. Quoting is safe without escaping: C# namespace and
-    /// member names are limited to letters, digits and underscores, so a quote
-    /// character can never appear inside one.
+    /// <c>ClassName</c> requires the namespace: MSTest matches nothing for a
+    /// bare class name.
+    ///
+    /// Values are quoted for the shell Nx runs commands through. Quoting needs
+    /// no escaping here, since C# namespace and member names are limited to
+    /// letters, digits and underscores.
     /// </remarks>
-    public string[] FilterArgs => MethodName is null
-        ? ["--treenode-filter", Quote($"/*/{(string.IsNullOrEmpty(Namespace) ? "*" : Namespace)}/{ClassName}/*")]
-        : ["--filter", Quote($"FullyQualifiedName={Id}")];
+    public string[] FilterArgs =>
+    [
+        "--filter",
+        Quote(MethodName is null ? $"ClassName={ClassFqn}" : $"FullyQualifiedName={Id}")
+    ];
 
     private static string Quote(string value) => $"\"{value}\"";
 }

@@ -60,7 +60,8 @@ public class TestClassScannerTests
         var unit = Assert.Single(Scan(SplitBy.Class, "[TestClass] public class LoginTests { }"));
 
         Assert.Equal("LoginTests", unit.Id);
-        Assert.Equal(["--treenode-filter", "\"/*/*/LoginTests/*\""], unit.FilterArgs);
+        // A class in the global namespace has no namespace to qualify with.
+        Assert.Equal(["--filter", "\"ClassName=LoginTests\""], unit.FilterArgs);
     }
 
     // --- Attribute recognition ---------------------------------------------
@@ -202,10 +203,11 @@ public class TestClassScannerTests
 
         Assert.Equal(["Acme.Api.SmokeTests", "Acme.Web.SmokeTests"], units.Select(u => u.Id));
 
-        // The namespace segment is what keeps these from both matching one
-        // another's filter and double-running.
-        Assert.Equal("\"/*/Acme.Api/SmokeTests/*\"", units[0].FilterArgs[1]);
-        Assert.Equal("\"/*/Acme.Web/SmokeTests/*\"", units[1].FilterArgs[1]);
+        // The namespace is what keeps these from both matching one another's
+        // filter and double-running. MSTest also matches nothing for a bare
+        // class name, so it is required regardless.
+        Assert.Equal("\"ClassName=Acme.Api.SmokeTests\"", units[0].FilterArgs[1]);
+        Assert.Equal("\"ClassName=Acme.Web.SmokeTests\"", units[1].FilterArgs[1]);
     }
 
     // --- Method mode --------------------------------------------------------

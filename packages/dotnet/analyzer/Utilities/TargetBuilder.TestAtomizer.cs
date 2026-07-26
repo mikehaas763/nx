@@ -201,11 +201,22 @@ public static partial class TargetBuilder
 
         args.Add("--");
         args.AddRange(unit.FilterArgs);
-        args.AddRange(["--results-directory", $"\"{cwdRelativeResultsPath}\""]);
-        args.AddRange(["--report-trx", "--report-trx-filename", $"\"{unit.Id}_{{tfm}}.trx\""]);
 
-        // Without this a filter that matches nothing is a silent pass. Exit code
-        // 9 instead makes a discovery bug loud on the first CI run.
+        // Isolates each task's reports so that replaying one from cache cannot
+        // restore another's. Whatever reporters the project has configured write
+        // in here.
+        //
+        // No reporter is turned on here. `--report-trx` comes from an extension
+        // that is only present when the project references it (the MSTest
+        // metapackage bundles it from 3.8 onward), and passing it to a project
+        // without it is a hard "Unknown option" failure. Projects choose their
+        // reporters through TestingPlatformCommandLineArguments or runsettings,
+        // which then apply to the split and non-split targets alike.
+        args.AddRange(["--results-directory", $"\"{cwdRelativeResultsPath}\""]);
+
+        // Without this a filter that matches nothing is a silent pass. With it
+        // the run exits non-zero, which makes a discovery gap loud on its first
+        // CI run rather than invisible.
         args.AddRange(["--minimum-expected-tests", "1"]);
 
         return [.. args];
