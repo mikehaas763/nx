@@ -2,6 +2,7 @@ import {
   checkFilesExist,
   cleanupProject,
   newProject,
+  removeFile,
   runCLI,
   runCommand,
   tmpProjPath,
@@ -44,25 +45,26 @@ describe('.NET Plugin - Test Atomizer', () => {
 
     createDotNetProject({ name: project, type: 'mstest' });
 
-    // Pin the platform on explicitly rather than relying on what the template
-    // happens to generate for the installed SDK.
-    updateFile(
-      `${projectRoot}/${project}.csproj`,
-      `<Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup>
-    <TargetFramework>net8.0</TargetFramework>
-    <OutputType>Exe</OutputType>
-    <Nullable>enable</Nullable>
-    <IsTestProject>true</IsTestProject>
+    // Patch the generated project rather than replacing it, so the target
+    // framework and MSTest version stay whatever the installed SDK's template
+    // produces. Only the platform opt-in is added.
+    updateFile(`${projectRoot}/${project}.csproj`, (content) =>
+      content.replace(
+        '</PropertyGroup>',
+        `  <OutputType>Exe</OutputType>
     <EnableMSTestRunner>true</EnableMSTestRunner>
     <TestingPlatformDotnetTestSupport>true</TestingPlatformDotnetTestSupport>
-  </PropertyGroup>
-  <ItemGroup>
-    <PackageReference Include="MSTest" Version="3.6.4" />
-  </ItemGroup>
-</Project>
-`
+  </PropertyGroup>`
+      )
     );
+
+    // The template ships a sample test class, which would show up as another
+    // split target and make the expected target lists depend on the SDK version.
+    for (const sample of ['UnitTest1.cs', 'Test1.cs']) {
+      if (existsSync(tmpProjPath(`${projectRoot}/${sample}`))) {
+        removeFile(`${projectRoot}/${sample}`);
+      }
+    }
 
     updateFile(
       `${projectRoot}/LoginTests.cs`,
@@ -92,6 +94,11 @@ public class CheckoutTests
 }
 `
     );
+
+    // The project was restored by `dotnet new` before OutputType changed, so
+    // restore again to keep the assets file in step with the edited project.
+    // Without this, the `--no-build` split tasks fail on stale assets.
+    runCommand('dotnet restore', { cwd: tmpProjPath(projectRoot) });
 
     // A second registration scoped by `include` is how a single project opts in
     // without changing behavior for every other .NET project in the workspace.
