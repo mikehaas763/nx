@@ -36,7 +36,7 @@ public static partial class TargetBuilder
     /// <returns>The target group, or null when nothing was added.</returns>
     private static Dictionary<string, List<string>>? AddAtomizedTestTargets(
         Dictionary<string, Target> targets,
-        List<TestUnit> units,
+        TestDiscoveryResult discovery,
         Target baseTestTarget,
         PluginOptions options,
         TestRunnerMode mode,
@@ -47,6 +47,9 @@ public static partial class TargetBuilder
         string fileName)
     {
         var ciTargetName = options.TestCiTargetName!;
+        var units = discovery.Units;
+
+        ReportExclusions(discovery, projectName, options.TestTargetName);
 
         // A project with no discoverable units gets no parent either — an
         // otherwise-empty group would show up in the UI and a no-op parent with
@@ -128,6 +131,50 @@ public static partial class TargetBuilder
         groupMembers.Insert(0, ciTargetName);
 
         return new Dictionary<string, List<string>> { [groupName] = groupMembers };
+    }
+
+    /// <summary>
+    /// Reports test classes and methods that were found but deliberately left
+    /// out of the split.
+    /// </summary>
+    /// <remarks>
+    /// This is the one failure mode of splitting that is invisible from the
+    /// outside: the excluded tests still run under the ordinary test target, so
+    /// nothing fails and no output looks wrong — the split run simply stops
+    /// covering them. Saying so once, at graph construction, is the difference
+    /// between a known limitation and a silent gap.
+    ///
+    /// Deliberately says nothing about configurations that are merely
+    /// suboptimal. This only fires when coverage is actually affected.
+    /// </remarks>
+    private static void ReportExclusions(
+        TestDiscoveryResult discovery,
+        string projectName,
+        string testTargetName)
+    {
+        var reasons = new List<string>();
+
+        if (discovery.SkippedNested > 0)
+        {
+            reasons.Add($"{discovery.SkippedNested} nested");
+        }
+
+        if (discovery.SkippedGeneric > 0)
+        {
+            reasons.Add($"{discovery.SkippedGeneric} generic");
+        }
+
+        if (reasons.Count == 0)
+        {
+            return;
+        }
+
+        Console.Error.WriteLine(
+            $"@nx/dotnet: split '{projectName}' into {discovery.Units.Count} test targets, " +
+            $"leaving out {string.Join(" and ", reasons)} " +
+            $"({(discovery.SkippedNested + discovery.SkippedGeneric == 1 ? "test" : "tests")} " +
+            $"that cannot be selected individually by the test platform). " +
+            $"They still run as part of the '{testTargetName}' target.");
     }
 
     /// <summary>

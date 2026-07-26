@@ -20,6 +20,9 @@ namespace MsbuildAnalyzer.Tests;
 public class TestClassScannerTests
 {
     private static List<TestUnit> Scan(SplitBy splitBy, params string[] sources) =>
+        TestClassScanner.ScanSources(sources, splitBy).Units;
+
+    private static TestDiscoveryResult Discover(SplitBy splitBy, params string[] sources) =>
         TestClassScanner.ScanSources(sources, splitBy);
 
     private static List<string> Ids(SplitBy splitBy, params string[] sources) =>
@@ -369,5 +372,85 @@ public class TestClassScannerTests
     {
         Assert.Empty(Scan(SplitBy.Class));
         Assert.Empty(Scan(SplitBy.Method, "namespace Acme; public class Empty { }"));
+    }
+
+    // --- Exclusion tallies --------------------------------------------------
+    //
+    // A test class that gets no target is the only failure mode of splitting
+    // that is invisible from the outside, so the counts that drive the reported
+    // diagnostic are pinned here.
+
+    [Fact]
+    public void NestedTestClasses_AreCounted()
+    {
+        var result = Discover(SplitBy.Class,
+            "namespace Acme; [TestClass] public class Outer { [TestClass] public class Inner { } }");
+
+        Assert.Equal(1, result.SkippedNested);
+        Assert.Equal(0, result.SkippedGeneric);
+    }
+
+    [Fact]
+    public void GenericTestClasses_AreCounted()
+    {
+        var result = Discover(SplitBy.Class, "namespace Acme; [TestClass] public class Tests<T> { }");
+
+        Assert.Equal(1, result.SkippedGeneric);
+        Assert.Equal(0, result.SkippedNested);
+    }
+
+    [Fact]
+    public void GenericTestMethods_AreCounted()
+    {
+        var result = Discover(SplitBy.Method, """
+            namespace Acme;
+            [TestClass]
+            public class Tests
+            {
+                [TestMethod] public void Plain() { }
+                [TestMethod] public void Generic<T>() { }
+            }
+            """);
+
+        Assert.Equal(["Acme.Tests.Plain"], result.Units.Select(u => u.Id));
+        Assert.Equal(1, result.SkippedGeneric);
+    }
+
+    [Fact]
+    public void AbstractBaseClasses_AreNotCountedAsExclusions()
+    {
+        // A shared abstract test base is the normal shape of inheritance, not
+        // something withheld — reporting it would be noise on every run.
+        var result = Discover(SplitBy.Class,
+            "namespace Acme; [TestClass] public abstract class BaseTests { }",
+            "namespace Acme; [TestClass] public class LoginTests : BaseTests { }");
+
+        Assert.Equal(0, result.SkippedNested);
+        Assert.Equal(0, result.SkippedGeneric);
+    }
+
+    [Fact]
+    public void NonTestClasses_AreNotCountedAsExclusions()
+    {
+        // Ordinary helper types are not candidates in the first place.
+        var result = Discover(SplitBy.Class,
+            "namespace Acme; public class Helper { public class NestedHelper { } }",
+            "namespace Acme; public class Generic<T> { }");
+
+        Assert.Equal(0, result.SkippedNested);
+        Assert.Equal(0, result.SkippedGeneric);
+    }
+
+    [Fact]
+    public void ExclusionsAreTalliedAcrossFiles()
+    {
+        var result = Discover(SplitBy.Class,
+            "namespace Acme; [TestClass] public class A { [TestClass] public class Inner { } }",
+            "namespace Acme; [TestClass] public class B { [TestClass] public class Inner { } }",
+            "namespace Acme; [TestClass] public class Generic<T> { }");
+
+        Assert.Equal(["Acme.A", "Acme.B"], result.Units.Select(u => u.Id));
+        Assert.Equal(2, result.SkippedNested);
+        Assert.Equal(1, result.SkippedGeneric);
     }
 }

@@ -36,7 +36,7 @@ public static class TestClassScanner
     /// sources and <c>DefaultItemExcludes</c> are all honored without
     /// reimplementing MSBuild's item semantics.
     /// </remarks>
-    public static List<TestUnit> Scan(ProjectInstance project, SplitBy splitBy)
+    public static TestDiscoveryResult Scan(ProjectInstance project, SplitBy splitBy)
     {
         var paths = project
             .GetItems("Compile")
@@ -74,7 +74,7 @@ public static class TestClassScanner
     /// Split out from <see cref="Scan"/> so the discovery rules can be tested
     /// against inline sources without an MSBuild evaluation.
     /// </remarks>
-    public static List<TestUnit> ScanSources(IEnumerable<string> sources, SplitBy splitBy)
+    public static TestDiscoveryResult ScanSources(IEnumerable<string> sources, SplitBy splitBy)
     {
         var materialized = sources as IReadOnlyList<string> ?? sources.ToList();
 
@@ -91,26 +91,43 @@ public static class TestClassScanner
             DeclaresAssemblyDoNotParallelize(source));
 
         var units = new ConcurrentBag<TestUnit>();
+        var skippedNested = 0;
+        var skippedGeneric = 0;
 
         Parallel.ForEach(materialized, source =>
         {
-            foreach (var unit in ScanSource(source, splitBy, assemblyDoNotParallelize))
+            var exclusions = new Exclusions();
+            foreach (var unit in ScanSource(source, splitBy, assemblyDoNotParallelize, exclusions))
             {
                 units.Add(unit);
             }
+
+            Interlocked.Add(ref skippedNested, exclusions.Nested);
+            Interlocked.Add(ref skippedGeneric, exclusions.Generic);
         });
 
-        // Deduplicating by Id is what collapses `partial` classes declared across
-        // several files into a single class unit, while still letting their
-        // methods surface as distinct method units.
-        //
-        // Ordering must be deterministic: target names derive from these, and an
-        // unstable order would change the project graph hash on every run.
-        return units
-            .GroupBy(unit => unit.Id, StringComparer.Ordinal)
-            .Select(group => group.Aggregate(MergeDuplicates))
-            .OrderBy(unit => unit.Id, StringComparer.Ordinal)
-            .ToList();
+        return new TestDiscoveryResult
+        {
+            // Deduplicating by Id is what collapses `partial` classes declared
+            // across several files into a single class unit, while still letting
+            // their methods surface as distinct method units.
+            //
+            // Ordering must be deterministic: target names derive from these, and
+            // an unstable order would change the project graph hash on every run.
+            Units = [.. units
+                .GroupBy(unit => unit.Id, StringComparer.Ordinal)
+                .Select(group => group.Aggregate(MergeDuplicates))
+                .OrderBy(unit => unit.Id, StringComparer.Ordinal)],
+            SkippedNested = skippedNested,
+            SkippedGeneric = skippedGeneric
+        };
+    }
+
+    /// <summary>Per-file tally of test classes and methods left out.</summary>
+    private sealed class Exclusions
+    {
+        public int Nested;
+        public int Generic;
     }
 
     /// <summary>
@@ -134,13 +151,14 @@ public static class TestClassScanner
     private static IEnumerable<TestUnit> ScanSource(
         string source,
         SplitBy splitBy,
-        bool assemblyDoNotParallelize)
+        bool assemblyDoNotParallelize,
+        Exclusions exclusions)
     {
         var root = CSharpSyntaxTree.ParseText(source, ParseOptions).GetCompilationUnitRoot();
 
         foreach (var declaration in root.DescendantNodes().OfType<ClassDeclarationSyntax>())
         {
-            if (!IsAtomizableTestClass(declaration))
+            if (!IsAtomizableTestClass(declaration, exclusions))
             {
                 continue;
             }
@@ -167,13 +185,14 @@ public static class TestClassScanner
                 // Generic test methods would need their type arguments encoded
                 // (and commas %2C-escaped) in the FullyQualifiedName filter.
                 // Excluded rather than guessed at.
-                if (method.TypeParameterList is not null)
+                if (!HasAttribute(method.AttributeLists, "TestMethod", "DataTestMethod"))
                 {
                     continue;
                 }
 
-                if (!HasAttribute(method.AttributeLists, "TestMethod", "DataTestMethod"))
+                if (method.TypeParameterList is not null)
                 {
+                    exclusions.Generic++;
                     continue;
                 }
 
@@ -190,30 +209,42 @@ public static class TestClassScanner
         }
     }
 
-    private static bool IsAtomizableTestClass(ClassDeclarationSyntax declaration)
+    private static bool IsAtomizableTestClass(
+        ClassDeclarationSyntax declaration,
+        Exclusions exclusions)
     {
-        // Nested classes are excluded: the platform encodes them into the class
-        // segment in a form we have not confirmed, so filtering on the outer name
-        // alone risks matching nothing.
-        if (declaration.Parent is not (BaseNamespaceDeclarationSyntax or CompilationUnitSyntax))
+        // Checked first so the exclusion tallies below only count declarations
+        // that are actually test classes.
+        if (!HasAttribute(declaration.AttributeLists, "TestClass"))
         {
             return false;
         }
 
         // An abstract class has no tests of its own; its concrete subclasses
-        // carry their own [TestClass] in practice.
+        // carry their own [TestClass] in practice. Not counted as an exclusion —
+        // it is the normal shape of a shared test base, not something withheld.
         if (declaration.Modifiers.Any(SyntaxKind.AbstractKeyword))
         {
+            return false;
+        }
+
+        // Nested classes are excluded: the platform encodes them into the class
+        // segment in a form we have not confirmed, so filtering on the outer name
+        // alone risks matching nothing.
+        if (declaration.Parent is not (BaseNamespaceDeclarationSyntax or CompilationUnitSyntax))
+        {
+            exclusions.Nested++;
             return false;
         }
 
         // Generic classes are name-mangled in both filter syntaxes.
         if (declaration.TypeParameterList is not null)
         {
+            exclusions.Generic++;
             return false;
         }
 
-        return HasAttribute(declaration.AttributeLists, "TestClass");
+        return true;
     }
 
     /// <summary>

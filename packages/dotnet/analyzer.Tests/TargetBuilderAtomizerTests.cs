@@ -52,7 +52,7 @@ public class TargetBuilderAtomizerTests
             nxJson: null,
             directoryBuildInputs: [],
             isMtp: isMtp,
-            discoverTestUnits: _ => units ?? TwoClasses);
+            discoverTestUnits: _ => new TestDiscoveryResult { Units = units ?? TwoClasses });
 
     private static string[] Args(Target target) => target.Options?.Args ?? [];
 

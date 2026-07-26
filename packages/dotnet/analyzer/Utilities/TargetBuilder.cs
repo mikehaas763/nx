@@ -23,7 +23,7 @@ public static partial class TargetBuilder
         NxJsonConfig? nxJson,
         List<string> directoryBuildInputs,
         bool isMtp = false,
-        Func<SplitBy, List<TestUnit>>? discoverTestUnits = null)
+        Func<SplitBy, TestDiscoveryResult>? discoverTestUnits = null)
     {
         var targets = new Dictionary<string, Target>();
         Dictionary<string, List<string>>? targetGroups = null;
